@@ -39,16 +39,16 @@ if __name__ == "__main__":
     parser.add_argument('--beta2_D', default=0.9, type=float, help='beta2 parameter of the Adam optimizer for the discriminator')
 
     parser.add_argument('--dset_dir', default='data', type=str, help='dataset directory')
-    parser.add_argument('--dataset', default='CelebA', type=str, help='dataset name')
+    parser.add_argument('--dataset', default='libero', type=str, help='dataset name')
     parser.add_argument('--image_size', default=64, type=int, help='image size. now only (64,64) is supported')
     parser.add_argument('--num_workers', default=2, type=int, help='dataloader num_workers')
 
     parser.add_argument('--viz_on', default=True, type=str2bool, help='enable visdom visualization')
     parser.add_argument('--viz_port', default=8097, type=int, help='visdom port number')
     parser.add_argument('--viz_ll_iter', default=1000, type=int, help='visdom line data logging iter')
-    parser.add_argument('--viz_la_iter', default=5000, type=int, help='visdom line data applying iter')
-    parser.add_argument('--viz_ra_iter', default=10000, type=int, help='visdom recon image applying iter')
-    parser.add_argument('--viz_ta_iter', default=10000, type=int, help='visdom traverse applying iter')
+    parser.add_argument('--viz_la_iter', default=1000, type=int, help='visdom line data applying iter')
+    parser.add_argument('--viz_ra_iter', default=1000, type=int, help='visdom recon image applying iter')
+    parser.add_argument('--viz_ta_iter', default=1000, type=int, help='visdom traverse applying iter')
 
     parser.add_argument('--print_iter', default=500, type=int, help='print losses iter')
 

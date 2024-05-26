@@ -3,6 +3,8 @@
 import torch.nn as nn
 import torch.nn.init as init
 
+from blocks import Encoder_vae_128, Decoder_128
+
 
 class Discriminator(nn.Module):
     def __init__(self, z_dim):
@@ -10,15 +12,15 @@ class Discriminator(nn.Module):
         self.z_dim = z_dim
         self.net = nn.Sequential(
             nn.Linear(z_dim, 1000),
-            nn.LeakyReLU(0.2, True),
+            nn.LeakyReLU(0.2, False),
             nn.Linear(1000, 1000),
-            nn.LeakyReLU(0.2, True),
+            nn.LeakyReLU(0.2, False),
             nn.Linear(1000, 1000),
-            nn.LeakyReLU(0.2, True),
+            nn.LeakyReLU(0.2, False),
             nn.Linear(1000, 1000),
-            nn.LeakyReLU(0.2, True),
+            nn.LeakyReLU(0.2, False),
             nn.Linear(1000, 1000),
-            nn.LeakyReLU(0.2, True),
+            nn.LeakyReLU(0.2, False),
             nn.Linear(1000, 2),
         )
         self.weight_init()
@@ -35,6 +37,42 @@ class Discriminator(nn.Module):
 
     def forward(self, z):
         return self.net(z).squeeze()
+
+
+class FactorVAE_libero(nn.Module):
+    def __init__(self, z_dim=10):
+        super(FactorVAE_libero, self).__init__()
+        self.z_dim = z_dim
+        self.encoder = Encoder_vae_128(d=128, latent_dim=2*z_dim, num_channels=3)
+        self.decoder = Decoder_128(latent_dim=z_dim, d=128, output_channels=3)
+        # self.weight_init()
+
+    def weight_init(self, mode='normal'):
+        if mode == 'kaiming':
+            initializer = kaiming_init
+        elif mode == 'normal':
+            initializer = normal_init
+
+        for block in self._modules:
+            for m in self._modules[block]:
+                initializer(m)
+
+    def reparametrize(self, mu, logvar):
+        std = logvar.mul(0.5).exp_()
+        eps = std.data.new(std.size()).normal_()
+        return eps.mul(std).add_(mu)
+
+    def forward(self, x, no_dec=False):
+        stats = self.encoder(x)
+        mu = stats[:, :self.z_dim]
+        logvar = stats[:, self.z_dim:]
+        z = self.reparametrize(mu, logvar)
+
+        if no_dec:
+            return z.squeeze()
+        else:
+            x_recon = self.decoder(z)
+            return x_recon, mu, logvar, z.squeeze()
 
 
 class FactorVAE1(nn.Module):
