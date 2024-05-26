@@ -262,12 +262,12 @@ class Solver(object):
     def visualize_traverse(self, limit=3, inter=2 / 3, loc=-1):
         self.net_mode(train=False)
 
-        decoder = self.VAE.decode
-        encoder = self.VAE.encode
+        decoder = self.VAE.decoder
+        encoder = self.VAE.encoder
         interpolation = torch.arange(-limit, limit + 0.1, inter)
 
         random_img = self.data_loader.dataset.__getitem__(0)[1]
-        random_img = random_img.to(self.device).unsqueeze(0)
+        random_img = random_img.to(self.device)
         random_img_z = encoder(random_img)[:, :self.z_dim]
 
         if self.dataset.lower() == 'dsprites':
@@ -338,7 +338,7 @@ class Solver(object):
         else:
             fixed_idx = 0
             fixed_img = self.data_loader.dataset.__getitem__(fixed_idx)[0]
-            fixed_img = fixed_img.to(self.device).unsqueeze(0)
+            fixed_img = fixed_img.to(self.device)
             fixed_img_z = encoder(fixed_img)[:, :self.z_dim]
 
             random_z = torch.rand(1, self.z_dim, 1, 1, device=self.device)
@@ -355,7 +355,7 @@ class Solver(object):
                 z = z_ori.clone()
                 for val in interpolation:
                     z[:, row] = val
-                    sample = F.sigmoid(decoder(z)).data
+                    sample = F.sigmoid(decoder(z.squeeze(-1).squeeze(-1))).data
                     samples.append(sample)
                     gifs.append(sample)
             samples = torch.cat(samples, dim=0).cpu()
@@ -367,11 +367,11 @@ class Solver(object):
             output_dir = os.path.join(self.output_dir, str(self.global_iter))
             mkdirs(output_dir)
             gifs = torch.cat(gifs)
-            gifs = gifs.view(len(Z), self.z_dim, len(interpolation), self.nc, 64, 64).transpose(1, 2)
+            gifs = gifs.view(len(Z), self.z_dim, len(interpolation), self.nc, 128, 128).transpose(1, 2)
             for i, key in enumerate(Z.keys()):
                 for j, val in enumerate(interpolation):
                     save_image(tensor=gifs[i][j].cpu(),
-                               filename=os.path.join(output_dir, '{}_{}.jpg'.format(key, j)),
+                               fp=os.path.join(output_dir, '{}_{}.jpg'.format(key, j)),
                                nrow=self.z_dim, pad_value=1)
 
                 grid2gif(str(os.path.join(output_dir, key + '*.jpg')),

@@ -204,7 +204,7 @@ class View(nn.Module):
         self.size = size
 
     def forward(self, tensor):
-        return tensor.view(self.size)
+        return tensor.reshape(self.size)
 
 
 class Encoder_vae_128(nn.Module):
