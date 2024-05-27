@@ -1,5 +1,4 @@
 import logging
-import pickle
 import random
 
 import imgaug as ia
@@ -11,29 +10,9 @@ import os
 import torch
 import numpy as np
 from base_dataset import TrajectoryDataset
+from libero_singleTask_dataset import sim_framework_path
 
 log = logging.getLogger(__name__)
-
-FRAMEWORK_DIR = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), os.path.pardir, os.path.pardir)
-)
-
-
-def sim_framework_path(*args) -> str:
-    """
-    Abstraction from os.path.join()
-    Builds absolute paths from relative path strings with SIM_FRAMEWORK/ as root.
-    If args already contains an absolute path, it is used as root for the subsequent joins
-    Args:
-        *args:
-
-    Returns:
-        absolute path
-
-    """
-    abs_path = os.path.abspath(os.path.join(FRAMEWORK_DIR, *args))
-    return abs_path
-
 
 def get_max_data_len(data_directory: os.PathLike):
     if os.path.exists(data_directory):
@@ -81,23 +60,21 @@ class LiberoDataset(TrajectoryDataset):
     def __init__(
             self,
             data_directory: os.PathLike,
-            obs_modalities,
-            task_suite: str = "libero_object",
             # data='train',
-            obs_keys: str = "rgb",  # low_dim or rgb
+            obs_keys,  # low_dim or rgb
+            obs_modalities,
             dataset_keys=None,  # [actions, dones, obs, rewards, states]
             filter_by_attribute=None,
             padding=True,
             device="cpu",
-            obs_dim: int = 64,
+            obs_dim: int = 32,
             action_dim: int = 7,
-            state_dim: int = 110,
-            max_len_data: int = 260,
+            state_dim: int = 45,
+            max_len_data: int = 136,
             window_size: int = 1,
-            traj_per_task: int = 30,
+            traj_per_task: int = 1,
             data_aug: bool = False,
             aug_data_factor: float = 0.3,
-            task_idx: int = 0
 
     ):
         super().__init__(
@@ -138,62 +115,60 @@ class LiberoDataset(TrajectoryDataset):
         eye_in_hand_rgb = []
 
         # self.data_dir: abspath
-        # file_list = os.listdir(self.data_dir)
+        file_list = os.listdir(self.data_dir)
 
-        task_dir = "/home/i53/student/xing/Desktop/remote/Disentanglement_IL/environments/dataset/data"
-        with open(os.path.join(task_dir, task_suite + ".pkl"), 'rb') as f:
-            file_list = pickle.load(f)
+        for file in file_list:
+            if not file.endswith('.hdf5'):
+                continue
 
-        file = file_list[task_idx]
+            f = h5py.File(os.path.join(self.data_dir, file), 'r')
 
-        f = h5py.File(os.path.join(self.data_dir, file), 'r')
+            log.info("Loading demo: {}".format(file))
 
-        log.info("Loading demo: {}".format(file))
+            # get the image's basic shape from demo_0
+            if self.obs_keys == "rgb":
+                H, W, C = f["data"]["demo_0"]["obs"][self.obs_modalities[0]].shape[1:]
 
-        # get the image's basic shape from demo_0
-        if self.obs_keys == "rgb":
-            H, W, C = f["data"]["demo_0"]["obs"][self.obs_modalities[0]].shape[1:]
+            # determinate which demo should be loaded using demo_keys_list
+            if filter_by_attribute is not None:
+                self.demo_keys_list = [elem.decode("utf-8") for elem in
+                                       np.array(f["mask/{}".format(filter_by_attribute)][:])]
+            else:
+                self.demo_keys_list = list(f["data"].keys())
 
-        # determinate which demo should be loaded using demo_keys_list
-        if filter_by_attribute is not None:
-            self.demo_keys_list = [elem.decode("utf-8") for elem in
-                                   np.array(f["mask/{}".format(filter_by_attribute)][:])]
-        else:
-            self.demo_keys_list = list(f["data"].keys())
+            indices = np.argsort([int(elem[5:]) for elem in self.demo_keys_list])
+            num_demos = len(self.demo_keys_list)
 
-        indices = np.argsort([int(elem[5:]) for elem in self.demo_keys_list])
-        num_demos = len(self.demo_keys_list)
+            # load the states and actions in demos according to demo_keys_list
+            for i in indices[-1 * traj_per_task:]:
+                demo_name = f'demo_{i}'
+                demo = f["data"][demo_name]
+                demo_length = demo.attrs["num_samples"]
 
-        # load the states and actions in demos according to demo_keys_list
-        for i in indices[-1 * traj_per_task:]:
-            demo_name = f'demo_{i}'
-            demo = f["data"][demo_name]
-            demo_length = demo.attrs["num_samples"]
+                # zero_states = np.zeros((1, self.max_len_data, self.state_dim), dtype=np.float32)
+                zero_actions = np.zeros((1, self.max_len_data, self.action_dim), dtype=np.float32)
+                # zero_rewards = np.zeros((1, self.max_len_data), dtype=np.float32)
+                # zero_dones = np.zeros((1, self.max_len_data), dtype=np.float32)
+                zero_mask = np.zeros((1, self.max_len_data), dtype=np.float32)
 
-            # zero_states = np.zeros((1, self.max_len_data, self.state_dim), dtype=np.float32)
-            zero_actions = np.zeros((1, self.max_len_data, self.action_dim), dtype=np.float32)
-            # zero_rewards = np.zeros((1, self.max_len_data), dtype=np.float32)
-            # zero_dones = np.zeros((1, self.max_len_data), dtype=np.float32)
-            zero_mask = np.zeros((1, self.max_len_data), dtype=np.float32)
+                # states_data = demo['states'][:]
+                action_data = demo['actions'][:]
 
-            # states_data = demo['states'][:]
-            action_data = demo['actions'][:]
+                zero_actions[0, :demo_length, :] = action_data
+                zero_mask[0, :demo_length] = 1
 
-            zero_actions[0, :demo_length, :] = action_data
-            zero_mask[0, :demo_length] = 1
+                the_last_action = action_data[-1][:]
 
-            the_last_action = action_data[-1][:]
+                agent_view = demo['obs']['agentview_rgb'][:]
+                eye_in_hand = demo['obs']['eye_in_hand_rgb'][:]
 
-            agent_view = demo['obs']['agentview_rgb'][:]
-            eye_in_hand = demo['obs']['eye_in_hand_rgb'][:]
+                actions.append(zero_actions)
+                masks.append(zero_mask)
 
-            actions.append(zero_actions)
-            masks.append(zero_mask)
+                agentview_rgb.append(agent_view)
+                eye_in_hand_rgb.append(eye_in_hand)
 
-            agentview_rgb.append(agent_view)
-            eye_in_hand_rgb.append(eye_in_hand)
-
-        f.close()
+            f.close()
 
         self.actions = torch.from_numpy(np.concatenate(actions)).to(device).float()  # shape: B, T, D
 
@@ -280,7 +255,6 @@ class LiberoDataset2(TrajectoryDataset):
     def __init__(
             self,
             data_directory: os.PathLike,
-            task_suite,
             # data='train',
             obs_keys,  # low_dim or rgb
             obs_modalities,
@@ -293,10 +267,9 @@ class LiberoDataset2(TrajectoryDataset):
             state_dim: int = 110,
             max_len_data: int = 260,
             window_size: int = 1,
-            traj_per_task: int = 30,
+            traj_per_task: int = 10,
             data_aug: bool = True,
             aug_data_factor: float = 0.3,
-            task_idx: int = 0
     ):
         super().__init__(
             data_directory=data_directory,
@@ -336,93 +309,91 @@ class LiberoDataset2(TrajectoryDataset):
         eye_in_hand_rgb = []
 
         # self.data_dir: abspath
-        # file_list = os.listdir(self.data_dir)
+        file_list = os.listdir(self.data_dir)
 
-        task_dir = "/home/i53/student/xing/Desktop/remote/Disentanglement_IL/environments/dataset/data"
-        with open(os.path.join(task_dir, task_suite + ".pkl"), 'rb') as f:
-            file_list = pickle.load(f)
+        for file in file_list:
+            if not file.endswith('.hdf5'):
+                continue
 
-        file = file_list[task_idx]
+            f = h5py.File(os.path.join(self.data_dir, file), 'r')
 
-        f = h5py.File(os.path.join(self.data_dir, file), 'r')
+            log.info("Loading demo: {}".format(file))
 
-        log.info("Loading demo: {}".format(file))
+            # get the image's basic shape from demo_0
+            if self.obs_keys == "rgb":
+                H, W, C = f["data"]["demo_0"]["obs"][self.obs_modalities[0]].shape[1:]
 
-        # get the image's basic shape from demo_0
-        if self.obs_keys == "rgb":
-            H, W, C = f["data"]["demo_0"]["obs"][self.obs_modalities[0]].shape[1:]
+            # determinate which demo should be loaded using demo_keys_list
+            if filter_by_attribute is not None:
+                self.demo_keys_list = [elem.decode("utf-8") for elem in
+                                       np.array(f["mask/{}".format(filter_by_attribute)][:])]
+            else:
+                self.demo_keys_list = list(f["data"].keys())
 
-        # determinate which demo should be loaded using demo_keys_list
-        if filter_by_attribute is not None:
-            self.demo_keys_list = [elem.decode("utf-8") for elem in
-                                   np.array(f["mask/{}".format(filter_by_attribute)][:])]
-        else:
-            self.demo_keys_list = list(f["data"].keys())
+            indices = np.argsort([int(elem[5:]) for elem in self.demo_keys_list])
+            num_demos = len(self.demo_keys_list)
 
-        indices = np.argsort([int(elem[5:]) for elem in self.demo_keys_list])
-        num_demos = len(self.demo_keys_list)
+            # load the states and actions in demos according to demo_keys_list
+            for i in indices[:traj_per_task]:
+                demo_name = f'demo_{i}'
+                demo = f["data"][demo_name]
+                demo_length = demo.attrs["num_samples"]
 
-        # load the states and actions in demos according to demo_keys_list
-        for i in indices[:traj_per_task]:
-            demo_name = f'demo_{i}'
-            demo = f["data"][demo_name]
-            demo_length = demo.attrs["num_samples"]
+                # zero_states = np.zeros((1, self.max_len_data, self.state_dim), dtype=np.float32)
+                zero_actions = np.zeros((1, self.max_len_data, self.action_dim), dtype=np.float32)
+                # zero_rewards = np.zeros((1, self.max_len_data), dtype=np.float32)
+                # zero_dones = np.zeros((1, self.max_len_data), dtype=np.float32)
+                zero_mask = np.zeros((1, self.max_len_data), dtype=np.float32)
 
-            # zero_states = np.zeros((1, self.max_len_data, self.state_dim), dtype=np.float32)
-            zero_actions = np.zeros((1, self.max_len_data, self.action_dim), dtype=np.float32)
-            # zero_rewards = np.zeros((1, self.max_len_data), dtype=np.float32)
-            # zero_dones = np.zeros((1, self.max_len_data), dtype=np.float32)
-            zero_mask = np.zeros((1, self.max_len_data), dtype=np.float32)
+                # states_data = demo['states'][:]
+                action_data = demo['actions'][:]
+                # rewards_data = demo['rewards'][:]
+                # dones_data = demo['dones'][:]
 
-            # states_data = demo['states'][:]
-            action_data = demo['actions'][:]
-            # rewards_data = demo['rewards'][:]
-            # dones_data = demo['dones'][:]
+                # zero_states[0, :demo_length, :] = states_data  # would be T0, ...,Tn-1, Tn, 0, 0
+                zero_actions[0, :demo_length, :] = action_data
+                # zero_rewards[0, :demo_length] = rewards_data
+                # zero_dones[0, :demo_length] = dones_data
+                zero_mask[0, :demo_length] = 1
 
-            # zero_states[0, :demo_length, :] = states_data  # would be T0, ...,Tn-1, Tn, 0, 0
-            zero_actions[0, :demo_length, :] = action_data
-            # zero_rewards[0, :demo_length] = rewards_data
-            # zero_dones[0, :demo_length] = dones_data
-            zero_mask[0, :demo_length] = 1
+                # the_last_state = states_data[-1][:]
+                the_last_action = action_data[-1][:]
+                # the_last_reward = rewards_data[-1]
+                # the_last_done = dones_data[-1]
 
-            # the_last_state = states_data[-1][:]
-            the_last_action = action_data[-1][:]
-            # the_last_reward = rewards_data[-1]
-            # the_last_done = dones_data[-1]
+                # zero_agentview = np.zeros((self.max_len_data, H, W, C), dtype=np.float32)
+                # zero_inhand = np.zeros((self.max_len_data, H, W, C), dtype=np.float32)
+                agent_view = demo['obs']['agentview_rgb'][:]
+                eye_in_hand = demo['obs']['eye_in_hand_rgb'][:]
 
-            # zero_agentview = np.zeros((self.max_len_data, H, W, C), dtype=np.float32)
-            # zero_inhand = np.zeros((self.max_len_data, H, W, C), dtype=np.float32)
-            agent_view = demo['obs']['agentview_rgb'][:]
-            eye_in_hand = demo['obs']['eye_in_hand_rgb'][:]
+                the_last_agentview = agent_view[-1, :, :, :]
+                the_last_eye_in_hand_rgb = eye_in_hand[-1, :, :, :]
 
-            the_last_agentview = agent_view[-1, :, :, :]
-            the_last_eye_in_hand_rgb = eye_in_hand[-1, :, :, :]
+                # zero_agentview[ :demo_length, :, :, :] = agent_view
+                # zero_inhand[ :demo_length, :, :, :] = eye_in_hand
 
-            # zero_agentview[ :demo_length, :, :, :] = agent_view
-            # zero_inhand[ :demo_length, :, :, :] = eye_in_hand
+                # if padding:
+                #     zero_states[0, demo_length:, :] = the_last_state  # the sequence would be T0, ..., Tn-1, Tn, Tn, Tn
+                #     zero_actions[0, demo_length:, :] = the_last_action
+                #     zero_rewards[0, demo_length:] = the_last_reward
+                #     zero_dones[0, demo_length:] = the_last_done
+                #     zero_mask[0, :] = 1
+                #     zero_agentview[0, demo_length:, :, :, :] = the_last_agentview
+                #     zero_inhand[0, demo_length:, :, :, :] = the_last_eye_in_hand_rgb
 
-            # if padding:
-            #     zero_states[0, demo_length:, :] = the_last_state  # the sequence would be T0, ..., Tn-1, Tn, Tn, Tn
-            #     zero_actions[0, demo_length:, :] = the_last_action
-            #     zero_rewards[0, demo_length:] = the_last_reward
-            #     zero_dones[0, demo_length:] = the_last_done
-            #     zero_mask[0, :] = 1
-            #     zero_agentview[0, demo_length:, :, :, :] = the_last_agentview
-            #     zero_inhand[0, demo_length:, :, :, :] = the_last_eye_in_hand_rgb
+                # states.append(zero_states)
+                actions.append(zero_actions)
+                # rewards.append(zero_rewards)
+                # dones.append(zero_dones)
+                masks.append(zero_mask)
 
-            # states.append(zero_states)
-            actions.append(zero_actions)
-            # rewards.append(zero_rewards)
-            # dones.append(zero_dones)
-            masks.append(zero_mask)
+                # zero_agentview = torch.from_numpy(agent_view).to(device).float().permute(0, 3, 1, 2) / 255.
+                # zero_inhand = torch.from_numpy(eye_in_hand).to(device).float().permute(0, 3, 1, 2) / 255.
 
-            # zero_agentview = torch.from_numpy(agent_view).to(device).float().permute(0, 3, 1, 2) / 255.
-            # zero_inhand = torch.from_numpy(eye_in_hand).to(device).float().permute(0, 3, 1, 2) / 255.
+                agentview_rgb.append(agent_view)
+                eye_in_hand_rgb.append(eye_in_hand)
 
-            agentview_rgb.append(agent_view)
-            eye_in_hand_rgb.append(eye_in_hand)
-
-        f.close()
+            f.close()
 
         # self.states = torch.from_numpy(np.concatenate(states)).to(device).float()
         self.actions = torch.from_numpy(np.concatenate(actions)).to(device).float()  # shape: B, T, D
@@ -500,6 +471,7 @@ class LiberoDataset2(TrajectoryDataset):
 
         agentview_rgb = self.agentview_rgb[i][start:end]
         eye_in_hand_rgb = self.eye_in_hand_rgb[i][start:end]
+
 
         if self.data_aug is True and random.random() > (1 - self.aug_data_factor):
             # cv2.imshow('agent', agentview_rgb[0])

@@ -14,6 +14,7 @@ from ops import recon_loss, kl_divergence, permute_dims
 from model import FactorVAE1, FactorVAE2, Discriminator, FactorVAE_libero
 from dataset import return_data
 from libero_singleTask_dataset import LiberoDataset2
+from libero_dataset import LiberoDataset2 as LiberoDataset_multiTask
 
 torch.autograd.set_detect_anomaly(True)
 
@@ -39,10 +40,14 @@ class Solver(object):
                                   'rgb': ['agentview_rgb', 'eye_in_hand_rgb'], 'depth': [], 'scan': []},
                           'goal': {'low_dim': [], 'rgb': [], 'depth': [], 'scan': []}}
 
-        self.trainset = LiberoDataset2(data_directory="/home/i53/student/xing/Desktop/data/libero_object",
-                                       obs_modalities=obs_modalities,
-                                       task_suite='libero_object',
-                                       obs_keys='rgb')
+        # self.trainset = LiberoDataset2(data_directory="/home/i53/student/xing/Desktop/data/libero_object",
+        #                                obs_modalities=obs_modalities,
+        #                                task_suite='libero_object',
+        #                                obs_keys='rgb')
+
+        self.trainset = LiberoDataset_multiTask(data_directory="/home/i53/student/xing/Desktop/data/libero_object",
+                                                obs_modalities=obs_modalities,
+                                                obs_keys='rgb')
 
         self.data_loader = torch.utils.data.DataLoader(
             self.trainset,
@@ -113,8 +118,8 @@ class Solver(object):
     def train(self):
         self.net_mode(train=True)
 
-        ones = torch.ones(self.batch_size, dtype=torch.long, device=self.device)
-        zeros = torch.zeros(self.batch_size, dtype=torch.long, device=self.device)
+        # ones = torch.ones(self.batch_size, dtype=torch.long, device=self.device)
+        # zeros = torch.zeros(self.batch_size, dtype=torch.long, device=self.device)
 
         out = False
         while not out:
@@ -195,7 +200,7 @@ class Solver(object):
                     if self.dataset.lower() == '3dchairs':
                         self.visualize_traverse(limit=2, inter=0.5)
                     else:
-                        self.visualize_traverse(limit=3, inter=2 / 3)
+                        self.visualize_traverse(limit=10, inter=1)
 
                 if self.global_iter >= self.max_iter:
                     out = True
@@ -336,7 +341,7 @@ class Solver(object):
             Z = {'fixed_1': fixed_img_z1, 'fixed_2': fixed_img_z2,
                  'fixed_3': fixed_img_z3, 'random': random_img_z}
         else:
-            fixed_idx = 0
+            fixed_idx = 10
             fixed_img = self.data_loader.dataset.__getitem__(fixed_idx)[0]
             fixed_img = fixed_img.to(self.device)
             fixed_img_z = encoder(fixed_img)[:, :self.z_dim]
